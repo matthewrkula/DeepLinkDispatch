@@ -384,4 +384,125 @@ public class DeepLinkProcessorTest {
             "Only `Intent` or `androidx.core.app.TaskStackBuilder` are supported."
                 + " Please double check your imports and try again.");
   }
+
+    @Test public void testProcessorWithTwoCustomAnnotations() {
+        JavaFileObject customAnnotationWebLink = JavaFileObjects
+            .forSourceString("WebDeepLink", "package com.example;\n"
+                + "import com.airbnb.deeplinkdispatch.DeepLinkSpec;\n"
+                + "@DeepLinkSpec(prefix = { \"http://\", \"https://\"})\n"
+                + "public @interface WebDeepLink {\n"
+                + "    String[] value();\n"
+                + "}")
+            ;
+        JavaFileObject customAnnotationAppLink = JavaFileObjects
+            .forSourceString("AppDeepLink", "package com.example;\n"
+                + "import com.airbnb.deeplinkdispatch.DeepLinkSpec;\n"
+                + "@DeepLinkSpec(prefix = { \"example://\" })\n"
+                + "public @interface AppDeepLink {\n"
+                + "    String[] value();\n"
+                + "}")
+            ;
+        JavaFileObject sampleActivity = JavaFileObjects
+            .forSourceString("SampleActivity", "package com.example;"
+                + "import com.airbnb.deeplinkdispatch.DeepLink;\n"
+                + "import com.airbnb.deeplinkdispatch.DeepLinkHandler;\n\n"
+                + "import com.example.SampleModule;\n\n"
+                + "import com.example.OtherSampleModule;\n\n"
+                + "@DeepLinkHandler({ SampleModule.class, OtherSampleModule.class })\n"
+                + "public class SampleActivity {\n"
+                + "}")
+            ;
+
+        JavaFileObject module = JavaFileObjects.forSourceString(
+            "SampleModule", "package com.example;"
+                + "import com.airbnb.deeplinkdispatch.DeepLinkModule;\n\n"
+                + "import android.content.Intent;\n"
+                + "import android.content.Context;\n"
+                + "@DeepLinkModule\n"
+                + "public class SampleModule {\n"
+                + "  @WebDeepLink(\"reddit.com\") "
+                + "  public static Intent sample(Context context) {"
+                + "    return new Intent();"
+                + "  }"
+                + "}");
+
+        JavaFileObject otherModule = JavaFileObjects.forSourceString(
+            "OtherSampleModule", "package com.example;"
+                + "import com.airbnb.deeplinkdispatch.DeepLinkModule;\n\n"
+                + "import android.content.Intent;\n"
+                + "import android.content.Context;\n"
+                + "@DeepLinkModule\n"
+                + "public class OtherSampleModule {\n"
+                + "  @AppDeepLink(\"m.reddit.com\")"
+                + "  public static Intent otherSample(Context context) {"
+                + "    return new Intent();"
+                + "  }"
+                + "}");
+
+        assertAbout(javaSources())
+            .that(Arrays.asList(customAnnotationAppLink, customAnnotationWebLink,
+                module, otherModule, sampleActivity))
+            .processedWith(new DeepLinkProcessor())
+            .compilesWithoutError()
+            .and()
+            .generatesSources(
+                JavaFileObjects.forResource("OtherDeepLinkDelegate.java"),
+                JavaFileObjects.forSourceString("/SOURCE_OUTPUT.com.example.SampleModuleLoader",
+                    "package com.example;\n"
+                        + "\n"
+                        + "import com.airbnb.deeplinkdispatch.DeepLinkEntry;\n"
+                        + "import com.airbnb.deeplinkdispatch.Parser;\n"
+                        + "import java.lang.Override;\n"
+                        + "import java.lang.String;\n"
+                        + "import java.util.Arrays;\n"
+                        + "import java.util.Collections;\n"
+                        + "import java.util.List;\n"
+                        + "\n"
+                        + "public final class SampleModuleLoader implements Parser {\n"
+                        + "  public static final List<DeepLinkEntry> REGISTRY = "
+                        + "Collections.unmodifiableList(Arrays.asList(\n"
+                        + "    new DeepLinkEntry(\"http://reddit.com\", DeepLinkEntry.Type"
+                        + ".METHOD, SampleModule.class, \"sample\"),\n"
+                        + "    new DeepLinkEntry(\"https://reddit.com\", DeepLinkEntry.Type"
+                        + ".METHOD, SampleModule.class, \"sample\")));\n"
+                        + "\n"
+                        + "  @Override"
+                        + "  public DeepLinkEntry parseUri(String uri) {\n"
+                        + "    for (DeepLinkEntry entry : REGISTRY) {\n"
+                        + "      if (entry.matches(uri)) {\n"
+                        + "        return entry;\n"
+                        + "      }\n"
+                        + "    }\n"
+                        + "    return null;\n"
+                        + "  }\n"
+                        + "}"),
+                JavaFileObjects.forSourceString("/SOURCE_OUTPUT.com.example.OtherSampleModuleLoader",
+                    "package com.example;\n"
+                        + "\n"
+                        + "import com.airbnb.deeplinkdispatch.DeepLinkEntry;\n"
+                        + "import com.airbnb.deeplinkdispatch.Parser;\n"
+                        + "import java.lang.Override;\n"
+                        + "import java.lang.String;\n"
+                        + "import java.util.Arrays;\n"
+                        + "import java.util.Collections;\n"
+                        + "import java.util.List;\n"
+                        + "\n"
+                        + "public final class OtherSampleModuleLoader implements Parser {\n"
+                        + "  public static final List<DeepLinkEntry> REGISTRY = "
+                        + "Collections.unmodifiableList(Arrays.asList(\n"
+                        + "    new DeepLinkEntry(\"example://m.reddit.com\", DeepLinkEntry.Type"
+                        + ".METHOD, OtherSampleModule.class, \"otherSample\")));\n"
+                        + "\n"
+                        + "  @Override"
+                        + "  public DeepLinkEntry parseUri(String uri) {\n"
+                        + "    for (DeepLinkEntry entry : REGISTRY) {\n"
+                        + "      if (entry.matches(uri)) {\n"
+                        + "        return entry;\n"
+                        + "      }\n"
+                        + "    }\n"
+                        + "    return null;\n"
+                        + "  }\n"
+                        + "}")
+                );
+    }
 }

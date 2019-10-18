@@ -22,6 +22,7 @@ import com.google.auto.service.AutoService;
 import com.google.common.base.Function;
 import com.google.common.base.Optional;
 import com.google.common.collect.FluentIterable;
+import com.google.common.collect.Iterables;
 import com.google.common.collect.Sets;
 import com.squareup.javapoet.AnnotationSpec;
 import com.squareup.javapoet.ClassName;
@@ -41,6 +42,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -135,8 +137,11 @@ public class DeepLinkProcessor extends AbstractProcessor {
     elementsToProcess.addAll(roundEnv.getElementsAnnotatedWith(DEEP_LINK_CLASS));
 
     List<DeepLinkAnnotatedElement> deepLinkElements = new ArrayList<>();
+    LinkedHashMap<String, List<DeepLinkAnnotatedElement>> moduleDeepLinkElements = new LinkedHashMap<>();
+
     for (Element element : elementsToProcess) {
       ElementKind kind = element.getKind();
+      String enclosingModule = null;
       if (kind != ElementKind.METHOD && kind != ElementKind.CLASS) {
         error(element, "Only classes and methods can be annotated with @%s",
             DEEP_LINK_CLASS.getSimpleName());
@@ -151,6 +156,14 @@ public class DeepLinkProcessor extends AbstractProcessor {
         ExecutableElement executableElement = MoreElements.asExecutable(element);
         TypeElement returnType = MoreTypes.asTypeElement(executableElement.getReturnType());
         String qualifiedName = returnType.getQualifiedName().toString();
+
+        Element enclosingElement = element.getEnclosingElement();
+        if (enclosingElement.getAnnotation(DeepLinkModule.class) != null) {
+            enclosingModule = enclosingElement.getSimpleName().toString();
+            moduleDeepLinkElements.putIfAbsent(
+                enclosingModule, new ArrayList<DeepLinkAnnotatedElement>());
+        }
+
         if (!qualifiedName.equals("android.content.Intent")
             && !qualifiedName.equals("androidx.core.app.TaskStackBuilder")) {
           error(element, "Only `Intent` or `androidx.core.app.TaskStackBuilder` are supported."
@@ -170,7 +183,13 @@ public class DeepLinkProcessor extends AbstractProcessor {
           ? DeepLinkEntry.Type.CLASS : DeepLinkEntry.Type.METHOD;
       for (String deepLink : deepLinks) {
         try {
-          deepLinkElements.add(new DeepLinkAnnotatedElement(deepLink, element, type));
+            DeepLinkAnnotatedElement annotatedElement =
+                new DeepLinkAnnotatedElement(deepLink, element, type);
+          if (enclosingModule != null) {
+              moduleDeepLinkElements.get(enclosingModule).add(annotatedElement);
+          } else {
+              deepLinkElements.add(annotatedElement);
+          }
         } catch (MalformedURLException e) {
           messager.printMessage(Diagnostic.Kind.ERROR, "Malformed Deep Link URL " + deepLink);
         }
@@ -208,8 +227,13 @@ public class DeepLinkProcessor extends AbstractProcessor {
       String packageName = processingEnv.getElementUtils()
           .getPackageOf(deepLinkModuleElement).getQualifiedName().toString();
       try {
+        List<DeepLinkAnnotatedElement> entries = getElementsForModule(
+            deepLinkModuleElement.getSimpleName().toString(),
+            moduleDeepLinkElements,
+            deepLinkElements
+        );
         generateDeepLinkLoader(packageName, deepLinkModuleElement.getSimpleName().toString(),
-            deepLinkElements);
+            entries);
       } catch (IOException e) {
         messager.printMessage(Diagnostic.Kind.ERROR, "Error creating file");
       } catch (RuntimeException e) {
@@ -219,6 +243,17 @@ public class DeepLinkProcessor extends AbstractProcessor {
     }
 
     return false;
+  }
+
+  private static List<DeepLinkAnnotatedElement> getElementsForModule(String moduleName,
+      LinkedHashMap<String, List<DeepLinkAnnotatedElement>> moduleElements,
+      List<DeepLinkAnnotatedElement> otherElements
+  ) {
+      List<DeepLinkAnnotatedElement> elements = moduleElements.getOrDefault(
+          moduleName, new ArrayList<DeepLinkAnnotatedElement>());
+      elements.addAll(otherElements);
+      otherElements.clear();
+      return elements;
   }
 
   private static List<String> enumerateCustomDeepLinks(Element element,
